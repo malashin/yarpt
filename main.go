@@ -168,7 +168,16 @@ func secondsToHHMMSS(s float64) string {
 	return hhString + ":" + mmString + ":" + ssString
 }
 
+var strict = false
+
 func main() {
+	// If first argument is "strict" check filenames and get data from KinoPoisk.
+	if len(os.Args) > 1 {
+		if os.Args[1] == "strict" {
+			strict = true
+		}
+	}
+
 	// Read fileList and convert it into slice of strings.
 	fileList, err := readLines(fileListName)
 	if err != nil {
@@ -199,34 +208,76 @@ func main() {
 			return
 		}
 
-		// Get KinoPoisk ID from fileName.
-		season := regexpMap["seCoid"].ReplaceAllString(fileName, "${1}")
-		episode := regexpMap["seCoid"].ReplaceAllString(fileName, "${2}")
-		coid := regexpMap["seCoid"].ReplaceAllString(fileName, "${3}")
-		rW, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${4}"))
-		rH, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${5}"))
-		if coid == fileName || coid == "" {
-			consolePrint("\x1b[31;1m", "FileName is wrong.", "\x1b[0m\n")
-			consolePrint("MUST BE: .*coid(\\d+).*\n\n")
-			return
-		}
+		if strict {
+			// Get KinoPoisk ID from fileName.
+			season := regexpMap["seCoid"].ReplaceAllString(fileName, "${1}")
+			episode := regexpMap["seCoid"].ReplaceAllString(fileName, "${2}")
+			coid := regexpMap["seCoid"].ReplaceAllString(fileName, "${3}")
+			rW, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${4}"))
+			rH, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${5}"))
+			if coid == fileName || coid == "" {
+				consolePrint("\x1b[31;1m", "FileName is wrong.", "\x1b[0m\n")
+				consolePrint("MUST BE: .*coid(\\d+).*\n\n")
+				return
+			}
 
-		// Get movieName and movieType from KinoPisk API.
-		movieName, movieType, err := getMetaFromKP(coid)
-		if movieName == "" || movieType == "" {
+			// Get movieName and movieType from KinoPisk API.
+			movieName, movieType, err := getMetaFromKP(coid)
+			if movieName == "" || movieType == "" {
+				if err != nil {
+					consolePrint("\x1b[31;1m", err, ".\x1b[0m\n")
+				}
+				consolePrint("\x1b[33;1m", "getMetaFromKP: Could not get data from KinoPoisk", "\x1b[0m\n")
+				return
+			}
+			// Add season and episode numbers to movieName if movieType is SHOW.
+			if movieType == "SHOW" {
+				if season != "" || episode != "" {
+					movieName = movieName + ". " + season + " сезон. " + episode + " серия"
+				} else {
+					movieName = movieName + ". ####"
+				}
+			}
+
+			// Get file duration.
+			file, err := ffinfo.Probe(f)
+			if err != nil {
+				consolePrint("\x1b[31;1m", "ffInfo: Could not get metadata from file", "\x1b[0m\n")
+				return
+			}
+			durationString := file.Format.Duration
+			duration, err := strconv.ParseFloat(durationString, 64)
 			if err != nil {
 				consolePrint("\x1b[31;1m", err, ".\x1b[0m\n")
+				return
 			}
-			consolePrint("\x1b[33;1m", "getMetaFromKP: Could not get data from KinoPoisk", "\x1b[0m\n")
-			return
-		}
-		// Add season and episode numbers to movieName if movieType is SHOW.
-		if movieType == "SHOW" {
-			if season != "" || episode != "" {
-				movieName = movieName + ". " + season + " сезон. " + episode + " серия"
-			} else {
-				movieName = movieName + ". ####"
+			durationInMinutes := int(duration / 60)
+
+			// The durations list must be sorted in decreasing order.
+			sort.Sort(sort.Reverse(sort.IntSlice(durationTypes)))
+
+			// Get file duration type according to durationTypes list.
+			// 30 < x <= 60
+			// x = 60
+			durationInt := durationTypes[0]
+			for _, d := range durationTypes[1:] {
+				if durationInMinutes <= d {
+					durationInt = d
+				} else {
+					break
+				}
 			}
+			durationString = fmt.Sprintf("%02d", durationInt) + " минут"
+
+			// Determine if resolution is SD or HD.
+			resolution := "SD"
+			if rW > 1024 || rH > 576 {
+				resolution = "HD"
+			}
+
+			writeStringToFile(outputFile, movieName+"\t"+coid+"\t"+durationString+" "+resolution+"\t"+secondsToHHMMSS(duration)+"\t"+fileName+"\n", 0775)
+			consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(movieName, 32, 'l') + "  " + truncPad(coid, 8, 'l') + "  " + truncPad(durationString+" "+resolution, 12, 'l') + "  " + secondsToHHMMSS(duration) + "  " + truncPad(fileName, 32, 'l') + "\n")
+			continue
 		}
 
 		// Get file duration.
@@ -242,6 +293,13 @@ func main() {
 			return
 		}
 		durationInMinutes := int(duration / 60)
+
+		rW := file.Streams[0].Width
+		rH := file.Streams[0].Height
+		if rW == 0 || rH == 0 {
+			consolePrint("\x1b[31;1m", "Resolution information not found in the first stream", ".\x1b[0m\n")
+			return
+		}
 
 		// The durations list must be sorted in decreasing order.
 		sort.Sort(sort.Reverse(sort.IntSlice(durationTypes)))
@@ -265,7 +323,8 @@ func main() {
 			resolution = "HD"
 		}
 
-		writeStringToFile(outputFile, movieName+"\t"+coid+"\t"+durationString+" "+resolution+"\t"+secondsToHHMMSS(duration)+"\t"+fileName+"\n", 0775)
-		consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(movieName, 32, 'l') + "  " + truncPad(coid, 8, 'l') + "  " + truncPad(durationString+" "+resolution, 12, 'l') + "  " + secondsToHHMMSS(duration) + "  " + truncPad(fileName, 32, 'l') + "\n")
+		writeStringToFile(outputFile, fileName+"\t"+durationString+" "+resolution+"\t"+secondsToHHMMSS(duration)+"\t\n", 0775)
+		consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(fileName, 64, 'l') + "  " + truncPad(durationString+" "+resolution, 12, 'l') + "  " + secondsToHHMMSS(duration) + "  " + "\n")
+		continue
 	}
 }

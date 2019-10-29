@@ -33,7 +33,7 @@ var outputFileName = "report.txt"
 var durationTypes = []int{90, 60, 30, 10, 5}
 
 var regexpMap = map[string]*regexp.Regexp{
-	"seCoid":           regexp.MustCompile(`.*?(?:s(\d{2})e(\d{2,4}))?(?:\_)?coid(\d+).*_r(\d+)x(\d+)p.*`),
+	"seCoid":           regexp.MustCompile(`.*?(?:s(\d{2})e(\d{2,4}))?(?:\_)?coid(\d+).*`),
 	"durationHHMMSSMS": regexp.MustCompile(`.*Duration: (\d{2}\:\d{2}\:\d{2}\.\d{2}).*`),
 }
 
@@ -235,6 +235,17 @@ func main() {
 					return
 				}
 
+				audioCount := 0
+				for _, stream := range file.Streams {
+					if stream.CodecType == "audio" {
+						audioCount++
+					}
+				}
+				if audioCount == 0 {
+					consolePrint("\x1b[31;1m", "No audio stream found", ".\x1b[0m\n")
+					return
+				}
+
 				// The durations list must be sorted in decreasing order.
 				sort.Sort(sort.Reverse(sort.IntSlice(durationTypes)))
 
@@ -257,8 +268,13 @@ func main() {
 					resolution = "HD"
 				}
 
+				// Add audio channel count to the resolution string.
+				if audioCount > 1 {
+					resolution += fmt.Sprintf(" %da", audioCount)
+				}
+
 				writeStringToFile(outputFile, fileName+"\t"+durationString+" "+resolution+"\t"+secondsToHHMMSS(duration)+"\n", 0775)
-				consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(fileName, 64, 'l') + "  " + truncPad(durationString+" "+resolution, 12, 'l') + "  " + secondsToHHMMSS(duration) + "  " + "\n")
+				consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(fileName, 64, 'l') + "  " + truncPad(durationString+" "+resolution, 14, 'l') + "  " + secondsToHHMMSS(duration) + "  " + "\n")
 				continue
 			}
 		}
@@ -267,8 +283,6 @@ func main() {
 		season := regexpMap["seCoid"].ReplaceAllString(fileName, "${1}")
 		episode := regexpMap["seCoid"].ReplaceAllString(fileName, "${2}")
 		coid := regexpMap["seCoid"].ReplaceAllString(fileName, "${3}")
-		rW, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${4}"))
-		rH, _ := strconv.Atoi(regexpMap["seCoid"].ReplaceAllString(fileName, "${5}"))
 		if coid == fileName || coid == "" {
 			consolePrint("\x1b[31;1m", "FileName is wrong.", "\x1b[0m\n")
 			consolePrint("MUST BE: .*coid(\\d+).*\n\n")
@@ -284,6 +298,7 @@ func main() {
 			consolePrint("\x1b[33;1m", "getMetaFromKP: Could not get data from KinoPoisk", "\x1b[0m\n")
 			return
 		}
+
 		// Add season and episode numbers to movieName if movieType is SHOW.
 		if movieType == "SHOW" {
 			if season != "" || episode != "" {
@@ -311,6 +326,24 @@ func main() {
 			}
 			durationInMinutes := int(duration / 60)
 
+			rW := file.Streams[0].Width
+			rH := file.Streams[0].Height
+			if rW == 0 || rH == 0 {
+				consolePrint("\x1b[31;1m", "Resolution information not found in the first stream", ".\x1b[0m\n")
+				return
+			}
+
+			audioCount := 0
+			for _, stream := range file.Streams {
+				if stream.CodecType == "audio" {
+					audioCount++
+				}
+			}
+			if audioCount == 0 {
+				consolePrint("\x1b[31;1m", "No audio stream found", ".\x1b[0m\n")
+				return
+			}
+
 			// The durations list must be sorted in decreasing order.
 			sort.Sort(sort.Reverse(sort.IntSlice(durationTypes)))
 
@@ -333,8 +366,13 @@ func main() {
 				resolution = "HD"
 			}
 
+			// Add audio channel count to the resolution string.
+			if audioCount > 1 {
+				resolution += fmt.Sprintf(" %da", audioCount)
+			}
+
 			writeStringToFile(outputFile, movieName+"\t"+coid+"\t"+durationString+" "+resolution+"\t"+secondsToHHMMSS(duration)+"\t"+fileName+"\n", 0775)
-			consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(movieName, 32, 'l') + "  " + truncPad(coid, 8, 'l') + "  " + truncPad(durationString+" "+resolution, 12, 'l') + "  " + secondsToHHMMSS(duration) + "  " + truncPad(fileName, 32, 'l') + "\n")
+			consolePrint(fmt.Sprintf("%"+strconv.Itoa(len(strconv.Itoa(fileListLength)))+"d", i+1) + "/" + strconv.Itoa(fileListLength) + "  " + truncPad(movieName, 32, 'l') + "  " + truncPad(coid, 8, 'l') + "  " + truncPad(durationString+" "+resolution, 14, 'l') + "  " + secondsToHHMMSS(duration) + "  " + truncPad(fileName, 32, 'l') + "\n")
 		}
 	}
 }
